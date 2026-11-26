@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase-server";
+import { connection } from "next/server";
 import { updateMessageStatus } from "./actions";
-
 type Message = {
     id: string;
     full_name: string;
@@ -39,6 +39,8 @@ export default async function MessagesPage({
 }: {
     searchParams: Promise<{ status?: string }>;
 }) {
+    await connection();
+
     const params = await searchParams;
 
     const selectedStatus = filters.includes(
