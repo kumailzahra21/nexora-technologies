@@ -1,9 +1,12 @@
 
+import { connection } from "next/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase-server";
 
 export default async function AdminDashboard() {
+    await connection();
+
     const supabase = await createClient();
 
     const {
@@ -15,7 +18,8 @@ export default async function AdminDashboard() {
         redirect("/admin/login");
     }
 
-    const { data: isAdmin, error: adminError } = await supabase.rpc("is_admin");
+    const { data: isAdmin, error: adminError } =
+        await supabase.rpc("is_admin");
 
     if (adminError || isAdmin !== true) {
         redirect("/admin/login");
@@ -30,138 +34,99 @@ export default async function AdminDashboard() {
         supabase
             .from("internship_applications")
             .select("*", { count: "exact", head: true }),
+
         supabase
             .from("contact_messages")
             .select("*", { count: "exact", head: true }),
+
         supabase
             .from("client_reviews")
             .select("*", { count: "exact", head: true }),
+
         supabase
             .from("certificates")
             .select("*", { count: "exact", head: true }),
     ]);
 
-    const cards = [
+    const stats = [
         {
-            title: "Internship Applications",
+            title: "Applications",
             count: applicationsResult.count ?? 0,
-            description: "Review and manage internship applicants.",
             href: "/admin/applications",
-            icon: "✦",
+            description: "Review and manage internship applications",
         },
         {
-            title: "Contact Messages",
+            title: "Messages",
             count: messagesResult.count ?? 0,
-            description: "View messages received from website visitors.",
             href: "/admin/messages",
-            icon: "✉",
+            description: "View and manage contact inquiries",
         },
         {
-            title: "Client Reviews",
+            title: "Reviews",
             count: reviewsResult.count ?? 0,
-            description: "Review and manage submitted testimonials.",
             href: "/admin/reviews",
-            icon: "★",
+            description: "Approve or manage client reviews",
         },
         {
             title: "Certificates",
             count: certificatesResult.count ?? 0,
-            description: "Manage certificate verification records.",
             href: "/admin/certificates",
-            icon: "▤",
+            description: "Issue and verify certificates",
         },
     ];
 
     return (
-        <main className="min-h-screen bg-[#071426] px-4 py-10 text-white sm:px-8 lg:px-12">
-            <div className="mx-auto max-w-7xl">
-
-                <header className="mb-12 flex flex-wrap items-center justify-between gap-5">
+        <main className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-10">
+            <div className="max-w-6xl mx-auto space-y-8">
+                <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800 pb-6">
                     <div>
-                        <p className="mb-3 text-xs font-bold uppercase tracking-[0.3em] text-cyan-400">
+                        <p className="text-cyan-400 text-sm font-semibold tracking-widest uppercase">
                             Nexora Technologies
                         </p>
-
-                        <h1 className="text-3xl font-black sm:text-5xl">
+                        <h1 className="text-3xl font-bold tracking-tight mt-2">
                             Admin Dashboard
                         </h1>
-
-                        <p className="mt-3 text-sm text-slate-400">
-                            Welcome back. Manage your website activities from one place.
+                        <p className="text-sm text-slate-400 mt-2">
+                            Signed in as {user.email}
                         </p>
                     </div>
 
                     <Link
-                        href="/admin/applications"
-                        className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 text-sm font-bold text-cyan-300 transition hover:bg-cyan-400/20"
+                        href="/"
+                        className="text-sm px-5 py-3 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-400 transition"
                     >
-                        View Applications →
+                        View Website →
                     </Link>
                 </header>
 
-                <section className="mb-8 overflow-hidden rounded-3xl border border-cyan-400/20 bg-gradient-to-r from-blue-600/20 via-cyan-500/10 to-transparent p-6 sm:p-9">
-                    <p className="text-sm font-semibold tracking-widest text-cyan-300">
-                        CONTROL CENTER
-                    </p>
-
-                    <h2 className="mt-3 text-2xl font-bold sm:text-3xl">
-                        Everything in one place.
+                <section>
+                    <h2 className="text-xl font-semibold mb-5">
+                        Management Overview
                     </h2>
 
-                    <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
-                        Manage applications, messages, client feedback and certificates
-                        through your private administration area.
-                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        {stats.map((item) => (
+                            <Link
+                                key={item.title}
+                                href={item.href}
+                                className="group p-6 rounded-2xl bg-slate-900 border border-slate-800 hover:border-cyan-400/60 hover:-translate-y-1 transition-all flex flex-col justify-between min-h-44"
+                            >
+                                <div>
+                                    <p className="text-sm font-medium text-slate-400">
+                                        {item.title}
+                                    </p>
+                                    <p className="text-4xl font-bold text-white mt-3">
+                                        {item.count}
+                                    </p>
+                                </div>
+
+                                <p className="text-xs text-slate-500 group-hover:text-cyan-300 transition mt-5">
+                                    {item.description}
+                                </p>
+                            </Link>
+                        ))}
+                    </div>
                 </section>
-
-                <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-                    {cards.map((card) => (
-                        <Link
-                            key={card.title}
-                            href={card.href}
-                            className="group rounded-3xl border border-white/10 bg-[#10243d] p-6 transition duration-300 hover:-translate-y-1 hover:border-cyan-400/40 hover:bg-[#142d4a]"
-                        >
-                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-2xl text-cyan-300">
-                                {card.icon}
-                            </div>
-
-                            <p className="mt-7 text-sm text-slate-400">
-                                {card.title}
-                            </p>
-
-                            <p className="mt-2 text-4xl font-black text-white">
-                                {card.count}
-                            </p>
-
-                            <p className="mt-4 text-sm leading-6 text-slate-400">
-                                {card.description}
-                            </p>
-
-                            <p className="mt-6 text-sm font-bold text-cyan-300 transition group-hover:text-white">
-                                Open section →
-                            </p>
-                        </Link>
-                    ))}
-                </section>
-
-                <section className="mt-10 rounded-2xl border border-white/10 bg-[#10243d]/70 p-5">
-                    <p className="text-sm text-slate-400">
-                        Signed in as
-                    </p>
-
-                    <p className="mt-1 break-all font-semibold text-white">
-                        {user.email}
-                    </p>
-
-                    <p className="mt-3 text-xs text-slate-500">
-                        Keep your administrator login credentials private and secure.
-                    </p>
-                </section>
-
-                <footer className="mt-10 border-t border-white/10 pt-6 text-center text-xs text-slate-500">
-                    © 2026 Nexora Technologies. All rights reserved.
-                </footer>
-
             </div>
         </main>
     );
