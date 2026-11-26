@@ -4,31 +4,44 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase-server";
 
-export async function updateApplicationStatus(formData: FormData) {
-    const id = String(formData.get("id") || "");
-    const status = String(formData.get("status") || "");
+type ApplicationStatus = "approved" | "rejected";
 
-    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+export async function updateApplicationStatus(formData: FormData) {
+    const id = String(
+        formData.get("applicationId") || formData.get("id") || ""
+    ).trim();
+
+    const requestedStatus = String(formData.get("status") || "");
+
+    const allowedStatuses: ApplicationStatus[] = ["approved", "rejected"];
+
+    if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    ) {
         throw new Error("Invalid application ID.");
     }
 
-    if (!["approved", "rejected"].includes(status)) {
+    if (!allowedStatuses.includes(requestedStatus as ApplicationStatus)) {
         throw new Error("Invalid application status.");
     }
 
+    const status = requestedStatus as ApplicationStatus;
     const supabase = await createClient();
 
     const {
         data: { user },
+        error: authError,
     } = await supabase.auth.getUser();
 
-    if (!user) throw new Error("Please log in.");
+    if (authError || !user) {
+        throw new Error("Please log in.");
+    }
 
     const { data: isAdmin, error: adminError } =
         await supabase.rpc("is_admin");
 
     if (adminError || isAdmin !== true) {
-        throw new Error("Admin access required.");
+        throw new Error("You are not authorized.");
     }
 
     const { data, error } = await supabase
@@ -43,24 +56,33 @@ export async function updateApplicationStatus(formData: FormData) {
         .select("id")
         .maybeSingle();
 
-    if (error) throw new Error(error.message);
-    if (!data) throw new Error("Application not found or already reviewed.");
+    if (error) {
+        throw new Error(error.message);
+    }
+
+    if (!data) {
+        throw new Error("Application not found or already reviewed.");
+    }
 
     const { error: auditError } = await supabase
         .from("admin_audit_logs")
         .insert({
             actor_id: user.id,
-            action: status === "approved"
-                ? "application_approved"
-                : "application_rejected",
+            action:
+                status === "approved"
+                    ? "application_approved"
+                    : "application_rejected",
             target_table: "internship_applications",
             target_id: id,
+            details: { new_status: status },
         });
-
-    if (auditError) {
-        throw new Error("Status updated, but audit log could not be saved.");
-    }
 
     revalidatePath("/admin/applications");
     revalidatePath("/admin");
+
+    if (auditError) {
+        throw new Error(
+            "Application updated, but audit logging failed: " + auditError.message
+        );
+    }
 }

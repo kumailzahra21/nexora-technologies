@@ -4,23 +4,38 @@
 import { createClient } from "@/lib/supabase-server";
 import { revalidatePath } from "next/cache";
 
+type ReviewStatus = "pending" | "approved" | "rejected";
+
 export async function updateReviewStatus(formData: FormData) {
-    const id = String(formData.get("review_id") || "");
-    const status = String(formData.get("status") || "");
+    const id = String(
+        formData.get("review_id") || formData.get("reviewId") || ""
+    ).trim();
 
-    const allowedStatuses = ["pending", "approved", "rejected"];
+    const requestedStatus = String(formData.get("status") || "");
 
-    if (!id || !allowedStatuses.includes(status)) {
+    const allowedStatuses: ReviewStatus[] = [
+        "pending",
+        "approved",
+        "rejected",
+    ];
+
+    if (
+        !id ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
+        !allowedStatuses.includes(requestedStatus as ReviewStatus)
+    ) {
         throw new Error("Invalid review update request.");
     }
 
+    const status = requestedStatus as ReviewStatus;
     const supabase = await createClient();
 
     const {
         data: { user },
+        error: authError,
     } = await supabase.auth.getUser();
 
-    if (!user) {
+    if (authError || !user) {
         throw new Error("Please sign in to continue.");
     }
 
@@ -28,20 +43,29 @@ export async function updateReviewStatus(formData: FormData) {
         await supabase.rpc("is_admin");
 
     if (adminError || isAdmin !== true) {
-        throw new Error("You are not authorized to manage reviews.");
+        throw new Error("You are not authorized to perform this action.");
     }
 
-    const { error: updateError } = await supabase
+    const updateValues = {
+        status,
+        reviewed_at:
+            status === "pending" ? null : new Date().toISOString(),
+        reviewed_by: status === "pending" ? null : user.id,
+    };
+
+    const { data, error: updateError } = await supabase
         .from("client_reviews")
-        .update({
-            status,
-            reviewed_at: new Date().toISOString(),
-            reviewed_by: user.id,
-        })
-        .eq("id", id);
+        .update(updateValues)
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
 
     if (updateError) {
         throw new Error(updateError.message);
+    }
+
+    if (!data) {
+        throw new Error("Review not found or update not permitted.");
     }
 
     const { error: auditError } = await supabase
@@ -54,12 +78,12 @@ export async function updateReviewStatus(formData: FormData) {
             details: { new_status: status },
         });
 
+    revalidatePath("/admin/reviews");
+    revalidatePath("/admin");
+
     if (auditError) {
         throw new Error(
             "Review updated, but audit logging failed: " + auditError.message
         );
     }
-
-    revalidatePath("/admin/reviews");
-    revalidatePath("/admin");
 }

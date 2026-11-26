@@ -4,23 +4,38 @@
 import { createClient } from "@/lib/supabase-server";
 import { revalidatePath } from "next/cache";
 
+type MessageStatus = "unread" | "read" | "replied" | "archived";
+
 export async function updateMessageStatus(formData: FormData) {
-    const id = String(formData.get("message_id") || "");
-    const status = String(formData.get("status") || "");
+    const id = String(
+        formData.get("messageId") || formData.get("message_id") || ""
+    ).trim();
 
-    const allowedStatuses = ["unread", "read", "replied", "archived"];
+    const requestedStatus = String(formData.get("status") || "");
 
-    if (!id || !allowedStatuses.includes(status)) {
+    const allowedStatuses: MessageStatus[] = [
+        "unread",
+        "read",
+        "replied",
+        "archived",
+    ];
+
+    if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
+        !allowedStatuses.includes(requestedStatus as MessageStatus)
+    ) {
         throw new Error("Invalid message update request.");
     }
 
+    const status = requestedStatus as MessageStatus;
     const supabase = await createClient();
 
     const {
         data: { user },
+        error: authError,
     } = await supabase.auth.getUser();
 
-    if (!user) {
+    if (authError || !user) {
         throw new Error("Please sign in.");
     }
 
@@ -31,13 +46,19 @@ export async function updateMessageStatus(formData: FormData) {
         throw new Error("You are not authorized.");
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
         .from("contact_messages")
         .update({ status })
-        .eq("id", id);
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
 
     if (error) {
         throw new Error(error.message);
+    }
+
+    if (!data) {
+        throw new Error("Message not found or update not permitted.");
     }
 
     const { error: auditError } = await supabase
@@ -50,12 +71,12 @@ export async function updateMessageStatus(formData: FormData) {
             details: { new_status: status },
         });
 
-    if (auditError) {
-        throw new Error(
-            "Message status updated, but audit logging failed: " + auditError.message
-        );
-    }
-
     revalidatePath("/admin/messages");
     revalidatePath("/admin");
+
+    if (auditError) {
+        throw new Error(
+            "Message updated, but audit logging failed: " + auditError.message
+        );
+    }
 }

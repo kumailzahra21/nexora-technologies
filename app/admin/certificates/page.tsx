@@ -1,8 +1,11 @@
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { updateCertificateStatus, addCertificate } from "./actions";
+
+export const instant = false;
 
 type Certificate = {
     id: string;
@@ -13,39 +16,23 @@ type Certificate = {
     expiry_date: string | null;
     status: "pending" | "issued" | "revoked";
     created_at: string;
+    approved_at: string | null;
 };
 
-const filters = ["all", "pending", "issued", "revoked"] as const;
-
 function statusStyle(status: Certificate["status"]) {
-    if (status === "issued")
+    if (status === "issued") {
         return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
+    }
 
-    if (status === "revoked")
+    if (status === "revoked") {
         return "border-rose-400/30 bg-rose-400/10 text-rose-300";
+    }
 
     return "border-amber-400/30 bg-amber-400/10 text-amber-300";
 }
 
-function dateLabel(value: string | null) {
-    if (!value) return "Not set";
-    return new Date(`${value}T00:00:00`).toLocaleDateString("en", {
-        dateStyle: "medium",
-    });
-}
-
-export default async function CertificatesAdminPage({
-    searchParams,
-}: {
-    searchParams: Promise<{ status?: string }>;
-}) {
-    const params = await searchParams;
-
-    const selectedStatus = filters.includes(
-        params.status as (typeof filters)[number]
-    )
-        ? (params.status as (typeof filters)[number])
-        : "all";
+export default async function CertificatesPage() {
+    await connection();
 
     const supabase = await createClient();
 
@@ -55,220 +42,253 @@ export default async function CertificatesAdminPage({
 
     if (!user) redirect("/admin/login");
 
-    const { data: isAdmin } = await supabase.rpc("is_admin");
+    const { data: isAdmin, error: adminError } =
+        await supabase.rpc("is_admin");
 
-    if (isAdmin !== true) redirect("/admin/login");
-
-    let query = supabase
-        .from("certificates")
-        .select(
-            "id, certificate_number, recipient_name, internship_field, issue_date, expiry_date, status, created_at"
-        )
-        .order("created_at", { ascending: false });
-
-    if (selectedStatus !== "all") {
-        query = query.eq("status", selectedStatus);
+    if (adminError || isAdmin !== true) {
+        redirect("/admin/login");
     }
 
-    const { data, error } = await query;
+    const { data: certificates, error } = await supabase
+        .from("certificates")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-    const [total, pending, issued, revoked] = await Promise.all([
-        supabase.from("certificates").select("*", { count: "exact", head: true }),
-        supabase.from("certificates").select("*", { count: "exact", head: true }).eq("status", "pending"),
-        supabase.from("certificates").select("*", { count: "exact", head: true }).eq("status", "issued"),
-        supabase.from("certificates").select("*", { count: "exact", head: true }).eq("status", "revoked"),
-    ]);
+    if (error) {
+        return (
+            <main className="min-h-screen bg-slate-950 p-6 text-white">
+                <div className="mx-auto max-w-6xl">
+                    <h1 className="text-3xl font-bold">Certificates</h1>
+                    <p className="mt-4 text-rose-400">
+                        Could not load certificates: {error.message}
+                    </p>
+                    <Link href="/admin" className="mt-6 inline-block text-cyan-400">
+                        Back to Dashboard
+                    </Link>
+                </div>
+            </main>
+        );
+    }
 
-    const stats = [
-        { label: "Total Certificates", count: total.count ?? 0 },
-        { label: "Pending", count: pending.count ?? 0 },
-        { label: "Issued", count: issued.count ?? 0 },
-        { label: "Revoked", count: revoked.count ?? 0 },
-    ];
+    const allCertificates = (certificates ?? []) as Certificate[];
+
+    const pending = allCertificates.filter(
+        (item) => item.status === "pending"
+    ).length;
+
+    const issued = allCertificates.filter(
+        (item) => item.status === "issued"
+    ).length;
+
+    const revoked = allCertificates.filter(
+        (item) => item.status === "revoked"
+    ).length;
 
     return (
-        <main className="min-h-screen bg-[#071426] px-4 py-10 text-white sm:px-8">
-            <div className="mx-auto max-w-7xl">
+        <main className="min-h-screen bg-slate-950 px-4 py-10 text-white sm:px-6">
+            <div className="mx-auto max-w-6xl">
+                <Link
+                    href="/admin"
+                    className="text-sm text-cyan-400 hover:text-cyan-300"
+                >
+                    ← Back to Dashboard
+                </Link>
 
-                <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
-                    <div>
-                        <p className="text-xs font-bold uppercase tracking-[0.3em] text-cyan-400">
-                            Nexora Technologies · Administration
-                        </p>
-                        <h1 className="mt-3 text-3xl font-black sm:text-4xl">
-                            Certificate Management
-                        </h1>
-                        <p className="mt-2 text-sm text-slate-400">
-                            Create, issue and manage official certificate records.
-                        </p>
-                    </div>
+                <div className="mt-6">
+                    <p className="text-sm font-semibold uppercase tracking-[0.25em] text-cyan-400">
+                        Nexora Technologies
+                    </p>
+                    <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+                        Certificate Management
+                    </h1>
+                    <p className="mt-2 text-slate-400">
+                        Create, issue, and manage internship certificates.
+                    </p>
+                </div>
 
-                    <Link
-                        href="/admin"
-                        className="rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-200 hover:border-cyan-400/40"
-                    >
-                        ← Dashboard
-                    </Link>
-                </header>
-
-                <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    {stats.map((stat) => (
-                        <div key={stat.label} className="rounded-2xl border border-white/10 bg-[#10243d] p-5">
-                            <p className="text-sm text-slate-400">{stat.label}</p>
-                            <p className="mt-3 text-3xl font-black text-cyan-300">{stat.count}</p>
+                <div className="mt-8 grid gap-4 sm:grid-cols-3">
+                    {[
+                        { label: "Pending", count: pending, color: "text-amber-400" },
+                        { label: "Issued", count: issued, color: "text-emerald-400" },
+                        { label: "Revoked", count: revoked, color: "text-rose-400" },
+                    ].map((item) => (
+                        <div
+                            key={item.label}
+                            className="rounded-2xl border border-slate-800 bg-slate-900 p-5"
+                        >
+                            <p className="text-sm text-slate-400">{item.label}</p>
+                            <p className={`mt-2 text-3xl font-bold ${item.color}`}>
+                                {item.count}
+                            </p>
                         </div>
                     ))}
-                </section>
+                </div>
 
-                <section className="mb-8 rounded-3xl border border-cyan-400/20 bg-[#10243d] p-5 sm:p-7">
-                    <h2 className="text-xl font-bold">Create Certificate Record</h2>
-                    <p className="mt-2 text-sm text-slate-400">
-                        Add a recipient and certificate number. New records start as pending.
+                <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+                    <h2 className="text-xl font-bold">Add New Certificate</h2>
+                    <p className="mt-1 text-sm text-slate-400">
+                        New certificates are created with Pending status.
                     </p>
 
                     <form action={addCertificate} className="mt-6 grid gap-4 sm:grid-cols-2">
-                        <input
-                            name="recipient_name"
-                            required
-                            minLength={2}
-                            maxLength={120}
-                            placeholder="Recipient full name"
-                            className="rounded-xl border border-white/10 bg-[#071426] px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                        />
+                        <div>
+                            <label className="mb-2 block text-sm text-slate-300">
+                                Recipient Name
+                            </label>
+                            <input
+                                name="recipient_name"
+                                required
+                                minLength={2}
+                                maxLength={120}
+                                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-400"
+                                placeholder="Full name"
+                            />
+                        </div>
 
-                        <input
-                            name="certificate_number"
-                            required
-                            maxLength={100}
-                            placeholder="Certificate number (e.g. NEX-2026-001)"
-                            className="rounded-xl border border-white/10 bg-[#071426] px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                        />
+                        <div>
+                            <label className="mb-2 block text-sm text-slate-300">
+                                Certificate Number
+                            </label>
+                            <input
+                                name="certificate_number"
+                                required
+                                maxLength={100}
+                                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-400"
+                                placeholder="NEX-2026-001"
+                            />
+                        </div>
 
-                        <input
-                            name="internship_field"
-                            required
-                            maxLength={150}
-                            placeholder="Internship field"
-                            className="rounded-xl border border-white/10 bg-[#071426] px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                        />
+                        <div>
+                            <label className="mb-2 block text-sm text-slate-300">
+                                Internship Field
+                            </label>
+                            <input
+                                name="internship_field"
+                                required
+                                maxLength={150}
+                                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-400"
+                                placeholder="Web Development"
+                            />
+                        </div>
 
-                        <label className="text-sm text-slate-400">
-                            Issue date
+                        <div>
+                            <label className="mb-2 block text-sm text-slate-300">
+                                Issue Date
+                            </label>
                             <input
                                 name="issue_date"
                                 type="date"
-                                className="mt-2 w-full rounded-xl border border-white/10 bg-[#071426] px-4 py-3 text-white"
+                                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-400"
                             />
-                        </label>
+                        </div>
 
-                        <label className="text-sm text-slate-400">
-                            Expiry date (optional)
+                        <div>
+                            <label className="mb-2 block text-sm text-slate-300">
+                                Expiry Date
+                            </label>
                             <input
                                 name="expiry_date"
                                 type="date"
-                                className="mt-2 w-full rounded-xl border border-white/10 bg-[#071426] px-4 py-3 text-white"
+                                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-400"
                             />
-                        </label>
+                        </div>
 
                         <div className="flex items-end">
                             <button
                                 type="submit"
-                                className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-bold text-white transition hover:brightness-110"
+                                className="w-full rounded-lg bg-cyan-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400"
                             >
-                                + Create Pending Record
+                                Add Certificate
                             </button>
                         </div>
                     </form>
                 </section>
 
-                <nav className="mb-6 flex flex-wrap gap-2">
-                    {filters.map((filter) => (
-                        <Link
-                            key={filter}
-                            href={filter === "all" ? "/admin/certificates" : `/admin/certificates?status=${filter}`}
-                            className={`rounded-full border px-4 py-2 text-sm font-semibold capitalize ${selectedStatus === filter
-                                    ? "border-cyan-400 bg-cyan-400/15 text-cyan-300"
-                                    : "border-white/10 bg-white/5 text-slate-400 hover:text-white"
-                                }`}
-                        >
-                            {filter}
-                        </Link>
-                    ))}
-                </nav>
+                <section className="mt-10">
+                    <h2 className="text-2xl font-bold">All Certificates</h2>
 
-                {error && (
-                    <div className="mb-6 rounded-xl border border-rose-400/30 bg-rose-400/10 p-4 text-rose-200">
-                        Could not load certificates: {error.message}
-                    </div>
-                )}
-
-                {!error && (!data || data.length === 0) && (
-                    <div className="rounded-3xl border border-dashed border-white/15 bg-[#10243d] p-14 text-center">
-                        <div className="text-4xl text-cyan-300">▤</div>
-                        <h2 className="mt-4 text-xl font-bold">No certificates found</h2>
-                        <p className="mt-2 text-sm text-slate-400">
-                            Create a pending record using the form above.
-                        </p>
-                    </div>
-                )}
-
-                <section className="space-y-5">
-                    {(data as Certificate[] | null)?.map((item) => (
-                        <article key={item.id} className="overflow-hidden rounded-3xl border border-white/10 bg-[#10243d]">
-                            <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
-                                <div>
-                                    <p className="text-xs font-bold uppercase tracking-wider text-cyan-300">
-                                        {item.certificate_number}
-                                    </p>
-                                    <h2 className="mt-2 text-xl font-bold">{item.recipient_name}</h2>
-                                    <p className="mt-1 text-sm text-slate-400">{item.internship_field}</p>
-                                    <p className="mt-3 text-xs text-slate-500">
-                                        Issue date: {dateLabel(item.issue_date)}
-                                        {" · "}
-                                        Expiry: {dateLabel(item.expiry_date)}
-                                    </p>
-                                </div>
-
-                                <span className={`rounded-full border px-3 py-1.5 text-xs font-bold capitalize ${statusStyle(item.status)}`}>
-                                    {item.status}
-                                </span>
+                    <div className="mt-5 space-y-4">
+                        {allCertificates.length === 0 ? (
+                            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
+                                <p className="text-slate-300">No certificates found.</p>
                             </div>
+                        ) : (
+                            allCertificates.map((certificate) => (
+                                <article
+                                    key={certificate.id}
+                                    className="rounded-2xl border border-slate-800 bg-slate-900 p-6"
+                                >
+                                    <div className="flex flex-col justify-between gap-4 sm:flex-row">
+                                        <div>
+                                            <h3 className="text-lg font-bold">
+                                                {certificate.recipient_name}
+                                            </h3>
+                                            <p className="mt-1 text-sm text-cyan-400">
+                                                {certificate.certificate_number}
+                                            </p>
+                                            <p className="mt-2 text-sm text-slate-400">
+                                                {certificate.internship_field}
+                                            </p>
+                                        </div>
 
-                            <div className="flex flex-wrap gap-3 border-t border-white/10 bg-[#0b1c31] p-5">
-                                {item.status !== "issued" && (
-                                    <form action={updateCertificateStatus}>
-                                        <input type="hidden" name="certificate_id" value={item.id} />
-                                        <input type="hidden" name="status" value="issued" />
-                                        <button className="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-400">
-                                            ✓ Issue Certificate
-                                        </button>
-                                    </form>
-                                )}
+                                        <div>
+                                            <span
+                                                className={`inline-block rounded-full border px-3 py-1 text-xs capitalize ${statusStyle(
+                                                    certificate.status
+                                                )}`}
+                                            >
+                                                {certificate.status}
+                                            </span>
+                                        </div>
+                                    </div>
 
-                                {item.status !== "revoked" && (
-                                    <form action={updateCertificateStatus}>
-                                        <input type="hidden" name="certificate_id" value={item.id} />
-                                        <input type="hidden" name="status" value="revoked" />
-                                        <button className="rounded-xl border border-rose-400/40 bg-rose-400/10 px-5 py-2.5 text-sm font-bold text-rose-200 hover:bg-rose-400/20">
-                                            Revoke Certificate
-                                        </button>
-                                    </form>
-                                )}
+                                    <div className="mt-5 grid gap-3 text-sm text-slate-400 sm:grid-cols-3">
+                                        <p>
+                                            Issue date: {certificate.issue_date || "Not set"}
+                                        </p>
+                                        <p>
+                                            Expiry date: {certificate.expiry_date || "Not set"}
+                                        </p>
+                                        <p>
+                                            Created:{" "}
+                                            {new Date(certificate.created_at).toLocaleDateString()}
+                                        </p>
+                                    </div>
 
-                                {item.status === "revoked" && (
-                                    <form action={updateCertificateStatus}>
-                                        <input type="hidden" name="certificate_id" value={item.id} />
-                                        <input type="hidden" name="status" value="pending" />
-                                        <button className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-5 py-2.5 text-sm font-bold text-amber-300">
-                                            Restore to Pending
-                                        </button>
-                                    </form>
-                                )}
-                            </div>
-                        </article>
-                    ))}
+                                    <div className="mt-5 flex flex-wrap gap-3">
+                                        {(["pending", "issued", "revoked"] as const).map(
+                                            (status) => (
+                                                <form key={status} action={updateCertificateStatus}>
+                                                    <input
+                                                        type="hidden"
+                                                        name="certificate_id"
+                                                        value={certificate.id}
+                                                    />
+                                                    <input
+                                                        type="hidden"
+                                                        name="status"
+                                                        value={status}
+                                                    />
+                                                    <button
+                                                        type="submit"
+                                                        disabled={certificate.status === status}
+                                                        className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold capitalize transition hover:border-cyan-400 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                                                    >
+                                                        {status === "issued"
+                                                            ? "Issue Certificate"
+                                                            : status === "revoked"
+                                                                ? "Revoke Certificate"
+                                                                : "Mark Pending"}
+                                                    </button>
+                                                </form>
+                                            )
+                                        )}
+                                    </div>
+                                </article>
+                            ))
+                        )}
+                    </div>
                 </section>
-
             </div>
         </main>
     );
